@@ -1,0 +1,13 @@
+ Tokens used this call: 2083, Total tokens used so far: 2083 
+ Tokens used this call: 9396, Total tokens used so far: 11479 
+ Tokens used this call: 16962, Total tokens used so far: 28441 
+ Tokens used this call: 18227, Total tokens used so far: 46668 
+ Tokens used this call: 25808, Total tokens used so far: 72476 
+ Tokens used this call: 27062, Total tokens used so far: 99538 
+ total execution time: 160.85649991035461s
+steps of every agent: [783, 576, 524, 468, 485, 623, 386, 428, 617, 626]
+trajectory length: [np.float64(32.35683796883647), np.float64(24.455514097021478), np.float64(22.250372313797236), np.float64(19.872384937353743), np.float64(26.35565984553836), np.float64(22.733171694784104), np.float64(18.93986957140565), np.float64(20.880740448909407), np.float64(24.911891654072264), np.float64(27.746954755053494)]
+total trajectory length: 240.5033972867722
+average trajectory length: 24.050339728677223
+controller run time: 6.551724672317505s
+iterations: 4

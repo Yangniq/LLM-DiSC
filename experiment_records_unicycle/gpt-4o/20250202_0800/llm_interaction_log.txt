@@ -1,0 +1,415 @@
+----------------------------------------------------------------------------------------------------
+Starting interaction at 2025-02-02 08:00:14.377208
+model: gpt-4o
+temperature: 1
+----------------------------------------------------------------------------------------------------
+System:
+
+You are an expert in designing controllers. Your task is to: 
+- Analyze the given prompt and design a controller for the agent based on the provided information. 
+- Implement the controller in Python, adhering to the specific format given in the prompt. 
+- Ensure the controller enables the agent to avoid obstacles and other agents while successfully reaching its target.
+
+
+User:
+
+There are `10` homogeneous agents, each with a radius of `0.25`. The agents follow the dynamics $\dot{\boldsymbol{x} } =f(\boldsymbol{x}) + g(\boldsymbol{x}) \boldsymbol{u}$, where $\boldsymbol{x} = [p_x, p_y,\theta]$ represents the agent's position $(p_x,p_y)$ and orientation $\theta$ in a 2D space, and $\boldsymbol{u} = [v, \omega]$ represents the control inputs, with $v$ as the linear velocity and $\omega$ as the angular velocity. The initial states of the agents are`[[1.5, 0.5, 1.57], [3.5, 0.5, 1.57], [4.5, 0.5, 1.57], [6.5, 0.5, 1.57], [8.5, 0.5, 1.57], [9.5, 0.5, 1.57], [11.5, 0.5, 1.57], [14.5, 0.5, 1.57], [15.5, 0.5, 1.57], [18.5, 0.5, 1.57]]`, with their initial controls are `[[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]`. Each agent has a known target point at `[[18, 19], [17, 19], [15, 19], [12, 19], [10, 19], [9, 19], [7.5, 19], [5, 19], [3, 19], [1, 19]]` (stop moving when the agent reaches the target point or gets sufficiently close to it). The positions of the obstacles are given as `[[(15.2, 8.3), (16.6, 12.0), (12.8, 12.6), (12.3, 11.9), (12.4, 9.0), (15.2, 8.3)], [(3.3, 6.8), (7.9, 6.3), (8.9, 7.6), (4.2, 8.0), (3.3, 6.8)], [(15.8, 2.5), (13.2, 6.4), (14, 3.2), (15.8, 2.5)], [(7.2, 11.2), (4.2, 17.4), (4.2, 12.0), (7.2, 11.2)], [(0.9, 5.2), (0.2, 3.2), (1.2, 1.8), (2.4, 1.3), (0.9, 5.2)], [(17.5, 6.1), (19.4, 5.3), (19.8, 5.8), (18.1, 6.1), (17.5, 6.1)]]`, each sublist represents the vertices of a polygon, with each vertex stored in the form of `(x, y)`. The last vertex is the same as the first, indicating a closed polygon.
+
+Please help design a controller and implement it as Python function. The function should output the control input signal needed to update the agent's state. The time interval for the agent's state update is `0.05`. The function should return the control signal. Please design the controller using the following Python function structure and do not need the `example usage`:
+
+```
+def get_control(index,all_state,all_ctrl,target_pos,obs_pos,agent_R, state_info):
+        # Your code to compute the control input
+        return control_input
+```
+
+Where:
+
+- 'index' is the agent index, starting from 0.
+- 'all_state' is the current state of all the agents in the format [[x1, y1,theta1], [x2, y2,theta2], ...].
+- 'all_ctrl' is the control signal of the agent in the format [[v1, omega1], [v2, omega2], ...].
+- 'target_pos' is the target position of the agent in the format [x, y].
+- 'obs_pos' is a list containing the vertex coordinates of multiple polygons, formatted as [[(x1,y1),(x2,y2),...,(x1,y1)],[...],...]. Each sublist represents the vertices of a polygon, the last vertex is the same as the first, indicating a closed polygon.
+- 'agent_R' is the radius of the agent.
+- 'state_info' is the state change of all agents from the initial moment to the current moment, formatted as [[[x11, y11,theta11], [x12, y12,theta12],...], [[x21, y21,theta21], [x22, y22,theta22],...],...]. (For example, `state_info[index]` records the state change of the agent `index` from the initial moment to the current moment.)
+
+
+
+Assistant:
+To design the controller for the agents to navigate towards their respective target positions while avoiding obstacles, we'll use a simple proportional controller for the linear and angular velocities. Additionally, to avoid collisions with obstacles and other agents, we'll incorporate a potential field approach to generate repulsive forces.
+
+Here's a step-by-step breakdown of our approach:
+
+1. **Calculate Desired Velocity**:
+   - Compute the desired direction towards the target from the agent's current position.
+   - Calculate the linear velocity to move towards the target.
+
+2. **Obstacle Avoidance**:
+   - For each obstacle, check the distance to the agent and compute a repulsive force if the agent is too close.
+   - Similarly, check the distance to other agents and apply a repulsive force if they are too close.
+
+3. **Combine Forces**:
+   - Combine the attractive force towards the target and the repulsive forces from obstacles and other agents to determine the final velocity and heading change.
+
+4. **Update Control Inputs**:
+   - The linear velocity \( v \) is scaled according to the combined attractive and repulsive forces.
+   - The angular velocity \( \omega \) is determined by the difference between the agent's current heading and the desired heading towards the target.
+
+Here's the Python implementation of the described controller:
+
+```python
+import numpy as np
+
+def get_control(index, all_state, all_ctrl, target_pos, obs_pos, agent_R, state_info):
+    def wrap_angle(angle):
+        while angle > np.pi:
+            angle -= 2 * np.pi
+        while angle < -np.pi:
+            angle += 2 * np.pi
+        return angle
+
+    # Extract current state of the agent
+    state = all_state[index]
+    target = target_pos
+    px, py, theta = state
+
+    # Attractive force towards the target
+    target_vec = np.array([target[0] - px, target[1] - py])
+    distance_to_target = np.linalg.norm(target_vec)
+    angle_to_target = np.arctan2(target_vec[1], target_vec[0])
+    desired_theta = wrap_angle(angle_to_target)
+
+    # Calculate control inputs for tracking the target
+    Kp_v = 1.0  # Proportional gain for linear velocity
+    Kp_omega = 2.0  # Proportional gain for angular velocity
+
+    v = Kp_v * distance_to_target
+    omega = Kp_omega * wrap_angle(desired_theta - theta)
+
+    def point_to_line_distance(point, line_start, line_end):
+        line_vec = np.array(line_end) - np.array(line_start)
+        point_vec = np.array(point) - np.array(line_start)
+        line_len = np.linalg.norm(line_vec)
+        line_unitvec = line_vec / line_len
+        point_vec_scaled = point_vec / line_len
+        t = np.dot(line_unitvec, point_vec_scaled)
+        t = np.clip(t, 0.0, 1.0)
+        nearest = np.array(line_start) + t * line_vec
+        dist = np.linalg.norm(np.array(point) - nearest)
+        return dist
+
+    # Avoid obstacles
+    for obs in obs_pos:
+        for i in range(len(obs) - 1):
+            dist_to_obs = point_to_line_distance((px, py), obs[i], obs[i+1])
+            if dist_to_obs < agent_R * 2:
+                repulsion_vec = np.array([obs[i][0] - px, obs[i][1] - py])
+                repulsion_dist = np.linalg.norm(repulsion_vec)
+                if repulsion_dist != 0:
+                    repulsion_vec = repulsion_vec / repulsion_dist
+                    v -= Kp_v / repulsion_dist
+                    repulsion_angle = np.arctan2(repulsion_vec[1], repulsion_vec[0])
+                    omega += Kp_omega * wrap_angle(repulsion_angle - theta)
+
+    # Avoid other agents
+    for i, other_state in enumerate(all_state):
+        if i != index:
+            dist_to_agent = np.linalg.norm(np.array([px - other_state[0], py - other_state[1]]))
+            if dist_to_agent < agent_R * 2:
+                repulsion_vec = np.array([other_state[0] - px, other_state[1] - py])
+                repulsion_dist = np.linalg.norm(repulsion_vec)
+                if repulsion_dist != 0:
+                    repulsion_vec = repulsion_vec / repulsion_dist
+                    v -= Kp_v / repulsion_dist
+                    repulsion_angle = np.arctan2(repulsion_vec[1], repulsion_vec[0])
+                    omega += Kp_omega * wrap_angle(repulsion_angle - theta)
+
+    # Limit the control inputs to reasonable values
+    v = np.clip(v, -1, 1)
+    omega = np.clip(omega, -np.pi/4, np.pi/4)
+
+    control_input = [v, omega]
+    return control_input
+```
+
+This code uses a combination of proportional control for moving towards the target and a simple repulsive potential field approach for avoiding obstacles and other agents. The velocities are limited to reasonable maximum values to ensure smooth and realistic movement.
+
+User:
+
+    To ensure the safety of the agents, we incorporate the control barrier function (CBF) into the current controller to verify whether the control signal maintains the agent within a safe region. The CBF is defined as $h(\boldsymbol{x}) = (p_x - p_{x_o})^2+(p_y- p_{y_o})^2 - R^2$. For obstacles, $[p_{x_o},p_{y_o}]$ is the closest point to the agent on the obstacle and $R$ is equal the agent's radius $r$. For other agents, $[p_{x_o},p_{y_o}]$ is the position of other agents and $R$ is equal to $2r$. The CBF $h(\boldsymbol{x})$ determines the safety set of the agent, denoted as $S:=\{\boldsymbol{x}:h(\boldsymbol{x}) \geq0\}$. To ensure that the system does not leave the safe set, the control input $\boldsymbol{u}$ should satisfy the CBF constraint $\dot{h}(\boldsymbol{x})+2h(\boldsymbol{x}) \geq 0$, i.e. $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$. When this inequality constraint $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$ approaches zero, it indicates that the agent is nearing the unsafe region, so the control input should be adjusted to increase the value of $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$.
+    
+    Under this controller, when the states of the 10 agents are [[ 1.7195481   1.31268828  1.60749616]
+ [ 6.9688933   5.70250432  0.92451028]
+ [ 7.3037281   6.11333965  2.0020788 ]
+ [ 7.95233187  6.0555386   2.01077873]
+ [ 8.91222093  7.20585672  2.31740427]
+ [ 8.78862761 15.55084976  1.50959098]
+ [ 7.50011349 18.99948981  1.78968681]
+ [ 5.00170685 18.99677333  2.05735965]
+ [14.28516265  2.82086441  2.08689824]
+ [14.22169072  5.31815785  3.78100388]], the agent with the state `[1.7195481  1.31268828 1.60749616]` encounters difficulties in progressing toward its target. Based on experience, the agent is likely to face safety issues (such as collision with obstacles or other agents), become trapped in cyclical motion, or fall into local optima when the agent is far away from its target point. Please note that only a few common issues are listed here, and other unmentioned issues may also occur.
+    
+    The agent's state over the past 50 steps is as follows: [[1.7195480994313714, 1.312688280940453, 1.607496156063707], [1.7195480994291015, 1.3126882810022749, 1.6074961561036276], [1.7195480994269052, 1.3126882810620908, 1.607496156141495], [1.71954809942477, 1.3126882811202456, 1.6074961561775276], [1.7195480994226842, 1.3126882811770544, 1.607496156211933], [1.7195480994206371, 1.3126882812328058, 1.6074961562449075], [1.7195480994186192, 1.3126882812877643, 1.6074961562766357], [1.7195480994166215, 1.3126882813421734, 1.6074961563072907], [1.7195480994146357, 1.312688281396257, 1.6074961563370347], [1.7195480994126544, 1.3126882814502214, 1.6074961563660186], [1.7195480994106704, 1.3126882815042575, 1.6074961563943828], [1.7195480994086774, 1.3126882815585417, 1.6074961564222583], [1.7195480994066692, 1.3126882816132341, 1.6074961564497667], [1.7195480994046406, 1.312688281668486, 1.6074961564770205], [1.7195480994025862, 1.3126882817244372, 1.6074961565041241], [1.7195480994005015, 1.3126882817812178, 1.607496156531175], [1.7195480993983818, 1.3126882818389478, 1.607496156558263], [1.7195480993962233, 1.312688281897738, 1.607496156585472], [1.7195480993940222, 1.3126882819576902, 1.6074961566128794], [1.7195480993917749, 1.3126882820188983, 1.607496156640557], [1.7195480993894783, 1.3126882820814474, 1.6074961566685713], [1.7195480993871297, 1.312688282145415, 1.6074961566969834], [1.7195480993847265, 1.312688282210871, 1.6074961567258501], [1.7195480993822663, 1.312688282277877, 1.607496156755223], [1.7195480993797472, 1.3126882823464874, 1.60749615678515], [1.7195480993771675, 1.3126882824167487, 1.6074961568156738], [1.7195480993745256, 1.3126882824887, 1.6074961568468336], [1.7195480993718206, 1.312688282562373, 1.607496156878664], [1.7195480993690515, 1.3126882826377908, 1.6074961569111965], [1.7195480993662178, 1.3126882827149697, 1.607496156944458], [1.7195480993633192, 1.3126882827939177, 1.6074961569784716], [1.7195480993603556, 1.3126882828746351, 1.6074961570132567], [1.7195480993573273, 1.3126882829571145, 1.6074961570488284], [1.719548099354235, 1.3126882830413402, 1.6074961570851987], [1.7195480993510792, 1.312688283127289, 1.6074961571223754], [1.7195480993478613, 1.3126882832149296, 1.6074961571603625], [1.7195480993445829, 1.3126882833042226, 1.6074961571991602], [1.7195480993412453, 1.3126882833951212, 1.607496157238765], [1.719548099337851, 1.3126882834875704, 1.6074961572791693], [1.719548099334402, 1.312688283581508, 1.607496157320362], [1.7195480993309007, 1.3126882836768636, 1.6074961573623285], [1.7195480993273504, 1.3126882837735605, 1.60749615740505], [1.719548099323754, 1.3126882838715141, 1.6074961574485038], [1.7195480993201147, 1.3126882839706333, 1.6074961574926645], [1.7195480993164363, 1.3126882840708205, 1.6074961575375024], [1.7195480993127223, 1.3126882841719716, 1.6074961575829845], [1.7195480993089771, 1.3126882842739773, 1.6074961576290743], [1.7195480993061463, 1.3126882843510763, 1.6074961576757323], [1.719548099304265, 1.3126882844023084, 1.6074961577204554], [1.719548099303309, 1.3126882844283514, 1.607496157761149]]. 
+    
+    The changes in the CBF constraint values over the past 50 state updates are as follows: the obstacle constraint values are [[np.float64(331.62812335580264), np.float64(54.24058128521387), np.float64(300.86816533443664), np.float64(219.39358386955553), np.float64(-0.4541716115858838), np.float64(535.3468749117287)], [np.float64(331.6281233549822), np.float64(54.24058128409831), np.float64(300.86816533480624), np.float64(219.39358386724962), np.float64(-0.4541716115293971), np.float64(535.3468749121223)], [np.float64(331.62812335417664), np.float64(54.24058128302161), np.float64(300.86816533514497), np.float64(219.39358386502477), np.float64(-0.45417161147515694), np.float64(535.3468749124786)], [np.float64(331.62812335338054), np.float64(54.240581281977164), np.float64(300.86816533545425), np.float64(219.39358386286725), np.float64(-0.4541716114228349), np.float64(535.3468749127991)], [np.float64(331.62812335258945), np.float64(54.24058128095892), np.float64(300.868165335736), np.float64(219.39358386076464), np.float64(-0.45417161137213), np.float64(535.3468749130858)], [np.float64(331.6281233517993), np.float64(54.24058127996142), np.float64(300.86816533599216), np.float64(219.39358385870554), np.float64(-0.45417161132276446), np.float64(535.3468749133405)], [np.float64(331.62812335100654), np.float64(54.240581278979676), np.float64(300.86816533622437), np.float64(219.39358385667967), np.float64(-0.45417161127448313), np.float64(535.3468749135654)], [np.float64(331.628123350208), np.float64(54.24058127800913), np.float64(300.86816533643434), np.float64(219.39358385467767), np.float64(-0.454171611227051), np.float64(535.3468749137621)], [np.float64(331.62812334940077), np.float64(54.24058127704559), np.float64(300.868165336624), np.float64(219.39358385269082), np.float64(-0.45417161118025096), np.float64(535.3468749139328)], [np.float64(331.62812334858256), np.float64(54.24058127608521), np.float64(300.86816533679496), np.float64(219.39358385071117), np.float64(-0.45417161113388316), np.float64(535.3468749140792)], [np.float64(331.62812334775094), np.float64(54.240581275124484), np.float64(300.86816533694866), np.float64(219.39358384873142), np.float64(-0.4541716110877627), np.float64(535.3468749142032)], [np.float64(331.6281233469037), np.float64(54.240581274160135), np.float64(300.86816533708657), np.float64(219.39358384674478), np.float64(-0.45417161104171877), np.float64(535.3468749143065)], [np.float64(331.62812334603905), np.float64(54.240581273189164), np.float64(300.8681653372102), np.float64(219.39358384474508), np.float64(-0.4541716109955927), np.float64(535.3468749143905)], [np.float64(331.6281233451553), np.float64(54.24058127220881), np.float64(300.86816533732076), np.float64(219.39358384272668), np.float64(-0.4541716109492405), np.float64(535.3468749144566)], [np.float64(331.6281233442508), np.float64(54.24058127121654), np.float64(300.8681653374196), np.float64(219.3935838406841), np.float64(-0.4541716109025263), np.float64(535.3468749145064)], [np.float64(331.6281233433239), np.float64(54.240581270209965), np.float64(300.8681653375075), np.float64(219.39358383861253), np.float64(-0.45417161085532404), np.float64(535.3468749145409)], [np.float64(331.6281233423733), np.float64(54.24058126918683), np.float64(300.8681653375858), np.float64(219.39358383650733), np.float64(-0.45417161080751767), np.float64(535.3468749145615)], [np.float64(331.6281233413978), np.float64(54.24058126814512), np.float64(300.86816533765546), np.float64(219.39358383436425), np.float64(-0.4541716107589981), np.float64(535.3468749145692)], [np.float64(331.6281233403961), np.float64(54.24058126708292), np.float64(300.86816533771713), np.float64(219.39358383217942), np.float64(-0.4541716107096668), np.float64(535.3468749145651)], [np.float64(331.62812333936716), np.float64(54.24058126599852), np.float64(300.8681653377719), np.float64(219.3935838299492), np.float64(-0.4541716106594311), np.float64(535.34687491455)], [np.float64(331.62812333831), np.float64(54.240581264890324), np.float64(300.8681653378204), np.float64(219.39358382767037), np.float64(-0.45417161060820643), np.float64(535.346874914525)], [np.float64(331.62812333722377), np.float64(54.240581263756894), np.float64(300.8681653378635), np.float64(219.3935838253398), np.float64(-0.45417161055591637), np.float64(535.3468749144906)], [np.float64(331.62812333610765), np.float64(54.240581262596905), np.float64(300.86816533790176), np.float64(219.39358382295484), np.float64(-0.45417161050248944), np.float64(535.3468749144482)], [np.float64(331.6281233349611), np.float64(54.240581261409204), np.float64(300.868165337936), np.float64(219.39358382051321), np.float64(-0.45417161044786336), np.float64(535.346874914398)], [np.float64(331.62812333378355), np.float64(54.24058126019274), np.float64(300.86816533796673), np.float64(219.3935838180125), np.float64(-0.4541716103919806), np.float64(535.3468749143411)], [np.float64(331.62812333257443), np.float64(54.24058125894661), np.float64(300.86816533799447), np.float64(219.39358381545094), np.float64(-0.4541716103347906), np.float64(535.3468749142779)], [np.float64(331.62812333133354), np.float64(54.24058125767007), np.float64(300.86816533802), np.float64(219.39358381282702), np.float64(-0.4541716102762506), np.float64(535.3468749142094)], [np.float64(331.62812333006065), np.float64(54.24058125636246), np.float64(300.86816533804375), np.float64(219.3935838101393), np.float64(-0.4541716102163227), np.float64(535.3468749141359)], [np.float64(331.62812332875575), np.float64(54.2405812550233), np.float64(300.86816533806626), np.float64(219.39358380738682), np.float64(-0.4541716101549769), np.float64(535.3468749140585)], [np.float64(331.6281233274188), np.float64(54.240581253652245), np.float64(300.868165338088), np.float64(219.3935838045688), np.float64(-0.4541716100921889), np.float64(535.3468749139776)], [np.float64(331.6281233260499), np.float64(54.24058125224905), np.float64(300.8681653381095), np.float64(219.3935838016848), np.float64(-0.4541716100279414), np.float64(535.3468749138937)], [np.float64(331.6281233246494), np.float64(54.240581250813676), np.float64(300.86816533813135), np.float64(219.39358379873457), np.float64(-0.45417160996222294), np.float64(535.3468749138076)], [np.float64(331.62812332321766), np.float64(54.24058124934614), np.float64(300.86816533815374), np.float64(219.3935837957183), np.float64(-0.4541716098950299), np.float64(535.3468749137197)], [np.float64(331.6281233217553), np.float64(54.24058124784669), np.float64(300.8681653381775), np.float64(219.39358379263635), np.float64(-0.4541716098263644), np.float64(535.346874913631)], [np.float64(331.62812332026306), np.float64(54.24058124631566), np.float64(300.8681653382027), np.float64(219.39358378948947), np.float64(-0.4541716097562356), np.float64(535.3468749135418)], [np.float64(331.62812331874153), np.float64(54.2405812447535), np.float64(300.8681653382299), np.float64(219.39358378627873), np.float64(-0.45417160968465864), np.float64(535.3468749134528)], [np.float64(331.6281233171919), np.float64(54.240581243160904), np.float64(300.8681653382597), np.float64(219.39358378300503), np.float64(-0.454171609611657), np.float64(535.3468749133646)], [np.float64(331.628123315615), np.float64(54.2405812415386), np.float64(300.8681653382922), np.float64(219.39358377967042), np.float64(-0.45417160953725877), np.float64(535.3468749132776)], [np.float64(331.62812331401227), np.float64(54.2405812398875), np.float64(300.86816533832797), np.float64(219.39358377627644), np.float64(-0.4541716094615), np.float64(535.3468749131926)], [np.float64(331.62812331238484), np.float64(54.24058123820869), np.float64(300.8681653383674), np.float64(219.39358377282542), np.float64(-0.454171609384423), np.float64(535.34687491311)], [np.float64(331.6281233107343), np.float64(54.24058123650334), np.float64(300.8681653384108), np.float64(219.39358376931975), np.float64(-0.45417160930607625), np.float64(535.3468749130305)], [np.float64(331.62812330906206), np.float64(54.24058123477279), np.float64(300.8681653384585), np.float64(219.3935837657622), np.float64(-0.45417160922651517), np.float64(535.3468749129547)], [np.float64(331.62812330737), np.float64(54.24058123301848), np.float64(300.8681653385108), np.float64(219.39358376215543), np.float64(-0.45417160914580035), np.float64(535.346874912883)], [np.float64(331.62812330565976), np.float64(54.240581231242004), np.float64(300.86816533856813), np.float64(219.39358375850307), np.float64(-0.45417160906399945), np.float64(535.3468749128162)], [np.float64(331.62812330393336), np.float64(54.24058122944508), np.float64(300.8681653386309), np.float64(219.39358375480853), np.float64(-0.4541716089811858), np.float64(535.3468749127546)], [np.float64(331.62812330219276), np.float64(54.24058122762949), np.float64(300.86816533869904), np.float64(219.39358375107543), np.float64(-0.45417160889743735), np.float64(535.3468749126987)], [np.float64(331.62812330044005), np.float64(54.2405812257972), np.float64(300.86816533877294), np.float64(219.39358374730773), np.float64(-0.4541716088128391), np.float64(535.3468749126491)], [np.float64(331.6281232986775), np.float64(54.240581223950215), np.float64(300.8681653388529), np.float64(219.39358374350968), np.float64(-0.454171608727479), np.float64(535.3468749126062)], [np.float64(331.62812329760425), np.float64(54.240581222596326), np.float64(300.8681653391996), np.float64(219.39358374071497), np.float64(-0.454171608660489), np.float64(535.3468749129507)], [np.float64(331.62812329719173), np.float64(54.24058122174553), np.float64(300.86816533976213), np.float64(219.39358373894592), np.float64(-0.4541716086131059), np.float64(535.3468749136172)]], representing the values of $\dot{h}_{obs1} + 2h_{obs1} , \dot{h}_{obs2} +2h_{obs2} \dots$. 
+    
+    Please analyze the changes in the agent's states to identify potential issues it may encounter under the current controller. Make necessary improvements to enhance the controller's performance, enabling more **flexible** adjustments to the agent's orientation and speed when navigating around obstacles and other agents.
+    
+    If necessary, prioritizing obstacle avoidance and then moving toward the target point after reaching a safe area may be a viable solution. For example, when the distance from the current position to an obstacle is detected to be less than a safe threshold, calculate a safe direction away from the obstacle and adjust the target linear and angular velocities accordingly:
+```
+if distance_to_obstacle < safety_margin:
+    # Calculate a safe direction away from the obstacle
+    safe_direction = np.array([x - closest_point[0], y - closest_point[1]])
+    safe_direction /= np.linalg.norm(safe_direction)
+    v_target = 0.5 * v_max  # Reduce target velocity
+    omega_target = np.arctan2(safe_direction[1], safe_direction[0]) - theta
+    omega_target = (omega_target + np.pi) % (2 * np.pi) - np.pi
+    v = v_target
+    omega = omega_target
+```
+    **Be sure not to change the function name.**
+    
+
+Assistant:
+To improve the controller, let's enhance the control strategy to prioritize obstacle avoidance while achieving the goal. To ensure flexibility and safety, we will:
+
+1. **Calculate Desired Velocity**:
+   - As previously, compute the desired direction and velocity towards the target.
+
+2. **Obstacle Avoidance with Control Barrier Functions (CBF)**:
+   - Evaluate the CBF constraint for each obstacle and other agents to ensure safety.
+   - Modify the control inputs if the agent is nearing the unsafe region by applying the CBF constraint.
+
+3. **Flexible Adjustment for Obstacle Avoidance**:
+   - If the distance to the obstacle or another agent is below a safety margin, prioritize avoiding the obstacle by adjusting the control signals to steer the agent towards a safer direction.
+
+4. **Combine Forces**:
+   - Combine the attractive force towards the target and the repulsive forces ensuring CBF constraints are always satisfied.
+
+5. **Update Control Inputs**:
+   - Scale the linear velocity \( v \) and angular velocity \( \omega \) accordingly based on the combined desired motions.
+
+Here's the updated implementation using the points discussed:
+
+```python
+import numpy as np
+
+def get_control(index, all_state, all_ctrl, target_pos, obs_pos, agent_R, state_info):
+    def wrap_angle(angle):
+        while angle > np.pi:
+            angle -= 2 * np.pi
+        while angle < -np.pi:
+            angle += 2 * np.pi
+        return angle
+    
+    # Extract current state of the agent
+    state = all_state[index]
+    target = target_pos
+    px, py, theta = state
+    v_max = 1.0  # Max linear velocity
+    
+    # Attractive force towards the target
+    target_vec = np.array([target[0] - px, target[1] - py])
+    distance_to_target = np.linalg.norm(target_vec)
+    angle_to_target = np.arctan2(target_vec[1], target_vec[0])
+    desired_theta = wrap_angle(angle_to_target)
+    
+    # Proportional gain for control
+    Kp_v = 1.0 
+    Kp_omega = 2.0 
+    
+    v = Kp_v * distance_to_target
+    omega = Kp_omega * wrap_angle(desired_theta - theta)
+    
+    safety_margin = 2.0 * agent_R
+
+    def point_to_line_distance(point, line_start, line_end):
+        line_vec = np.array(line_end) - np.array(line_start)
+        point_vec = np.array(point) - np.array(line_start)
+        line_len = np.linalg.norm(line_vec)
+        line_unitvec = line_vec / line_len
+        point_vec_scaled = point_vec / line_len
+        t = np.dot(line_unitvec, point_vec_scaled)
+        t = np.clip(t, 0.0, 1.0)
+        nearest = np.array(line_start) + t * line_vec
+        dist = np.linalg.norm(np.array(point) - nearest)
+        return dist, nearest
+    
+    # Obstacle avoidance and CBF application
+    for obs in obs_pos:
+        for i in range(len(obs) - 1):
+            dist_to_obs, closest_point = point_to_line_distance((px, py), obs[i], obs[i + 1])
+            if dist_to_obs < safety_margin:
+                # Safety control via CBF
+                h = (px - closest_point[0])**2 + (py - closest_point[1])**2 - (agent_R**2)
+                phi = 2 * ((px - closest_point[0]) * v * np.cos(theta) + (py - closest_point[1]) * v * np.sin(theta)) + 2 * h
+                if phi < 0:
+                    # Calculate a safe direction away from the obstacle
+                    safe_direction = np.array([px - closest_point[0], py - closest_point[1]])
+                    safe_direction /= np.linalg.norm(safe_direction)
+                    v = 0.5 * v_max  # Reduce target velocity
+                    omega = np.arctan2(safe_direction[1], safe_direction[0]) - theta
+                    omega = wrap_angle(omega)
+    
+    # Avoid other agents
+    for i, other_state in enumerate(all_state):
+        if i != index:
+            dist_to_agent = np.linalg.norm(np.array([px - other_state[0], py - other_state[1]]))
+            if dist_to_agent < safety_margin:
+                # Safety control via CBF
+                h = (px - other_state[0]) ** 2 + (py - other_state[1]) ** 2 - (2 * agent_R) ** 2
+                phi = 2 * ((px - other_state[0]) * v * np.cos(theta) + (py - other_state[1]) * v * np.sin(theta)) + 2 * h
+                if phi < 0:
+                    # Calculate a safe direction away from the agent
+                    safe_direction = np.array([px - other_state[0], py - other_state[1]])
+                    safe_direction /= np.linalg.norm(safe_direction)
+                    v = 0.5 * v_max  # Reduce target velocity
+                    omega = np.arctan2(safe_direction[1], safe_direction[0]) - theta
+                    omega = wrap_angle(omega)
+    
+    # Limit the control inputs to reasonable values
+    v = np.clip(v, -v_max, v_max)
+    omega = np.clip(omega, -np.pi/4, np.pi/4)
+
+    control_input = [v, omega]
+    return control_input
+```
+
+This implementation enhances the original controller by incorporating CBFs to ensure that the agents stay within a safe region, avoiding obstacles, and other agents. The control signals are adapted when the CBF constraint indicates that the agent is approaching an unsafe region to steer it towards a safer direction. The adjustments improve the agent's capability to navigate complex environments with multiple obstacles and other agents while aiming for flexibility and safety.
+
+User:
+
+    To ensure the safety of the agents, we incorporate the control barrier function (CBF) into the current controller to verify whether the control signal maintains the agent within a safe region. The CBF is defined as $h(\boldsymbol{x}) = (p_x - p_{x_o})^2+(p_y- p_{y_o})^2 - R^2$. For obstacles, $[p_{x_o},p_{y_o}]$ is the closest point to the agent on the obstacle and $R$ is equal the agent's radius $r$. For other agents, $[p_{x_o},p_{y_o}]$ is the position of other agents and $R$ is equal to $2r$. The CBF $h(\boldsymbol{x})$ determines the safety set of the agent, denoted as $S:=\{\boldsymbol{x}:h(\boldsymbol{x}) \geq0\}$. To ensure that the system does not leave the safe set, the control input $\boldsymbol{u}$ should satisfy the CBF constraint $\dot{h}(\boldsymbol{x})+2h(\boldsymbol{x}) \geq 0$, i.e. $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$. When this inequality constraint $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$ approaches zero, it indicates that the agent is nearing the unsafe region, so the control input should be adjusted to increase the value of $2(p_x - p_{x_o})v\cos(\theta)+2(p_y- p_{y_o})v\sin(\theta) +2h(\boldsymbol{x}) \geq 0$.
+    
+    Under this controller, when the states of the 10 agents are [[ 7.61564135  5.57608101  0.91237946]
+ [ 7.04163321  5.81976643  0.92375067]
+ [ 7.49611729  6.09242779  1.39486682]
+ [11.99999797 18.99998988  1.37249025]
+ [ 9.99984846 18.99472113  1.54209702]
+ [ 9.00044552 18.98897348  1.61117902]
+ [ 7.50000031 18.9999986   1.78968681]
+ [ 5.00000464 18.99999124  2.05735964]
+ [ 3.24234525 16.63675379  6.79775772]
+ [ 1.03127315 18.99770503  3.06773987]], the agent with the state `[7.49611729 6.09242779 1.39486682]` encounters difficulties in progressing toward its target. Based on experience, the agent is likely to face safety issues (such as collision with obstacles or other agents), become trapped in cyclical motion, or fall into local optima when the agent is far away from its target point. Please note that only a few common issues are listed here, and other unmentioned issues may also occur.
+    
+    The agent's state over the past 50 steps is as follows: [[7.496117292041124, 6.092427787266754, 1.3555969088060926], [7.496117292029625, 6.0924277872141515, 1.394866816975965], [7.496117292022864, 6.092427787176113, 1.3555969088060926], [7.496117292016075, 6.092427787145058, 1.394866816975965], [7.496117292013692, 6.092427787131655, 1.3555969088060926], [7.496117292012519, 6.092427787126288, 1.394866816975965], [7.4961172920143975, 6.092427787136857, 1.3555969088060926], [7.496117292018132, 6.092427787153945, 1.394866816975965], [7.496117292023263, 6.092427787182808, 1.3555969088060926], [7.496117292030528, 6.092427787216042, 1.394866816975965], [7.496117292037749, 6.09242778725666, 1.3555969088060926], [7.496117292046872, 6.092427787298399, 1.394866816975965], [7.496117292054386, 6.09242778734067, 1.3555969088060926], [7.496117292062941, 6.0924277873798065, 1.394866816975965], [7.496117292069439, 6.092427787416359, 1.3555969088060926], [7.496117292076472, 6.092427787448536, 1.394866816975965], [7.496117292081675, 6.092427787477804, 1.3555969088060926], [7.496117292087033, 6.092427787502313, 1.394866816975965], [7.4961172920908625, 6.092427787523858, 1.3555969088060926], [7.496117292094486, 6.092427787540435, 1.394866816975965], [7.4961172920971055, 6.092427787555169, 1.3555969088060926], [7.496117292099324, 6.092427787565321, 1.394866816975965], [7.496117292101047, 6.092427787575014, 1.3555969088060926], [7.496117292102268, 6.092427787580598, 1.394866816975965], [7.496117292103163, 6.092427787585635, 1.3555969088060926], [7.496117292102921, 6.092427787584528, 1.394866816975965], [7.496117292102924, 6.092427787584541, 1.3555969088060926], [7.496117292101716, 6.092427787579014, 1.394866816975965], [7.4961172921013235, 6.092427787576808, 1.3555969088060926], [7.496117292099822, 6.092427787569935, 1.394866816975965], [7.496117292099441, 6.092427787567796, 1.3555969088060926], [7.496117292098091, 6.092427787561619, 1.394866816975965], [7.4961172920979395, 6.092427787560763, 1.3555969088060926], [7.496117292096957, 6.092427787556268, 1.394866816975965], [7.496117292097111, 6.092427787557133, 1.3555969088060926], [7.496117292096578, 6.092427787554694, 1.394866816975965], [7.4961172920970585, 6.092427787557399, 1.3555969088060926], [7.49611729209703, 6.092427787557269, 1.394866816975965], [7.496117292097871, 6.092427787562, 1.3555969088060926], [7.4961172920984565, 6.092427787564679, 1.394866816975965], [7.496117292099749, 6.0924277875719515, 1.3555969088060926], [7.496117292101167, 6.092427787578439, 1.394866816975965], [7.496117292103016, 6.092427787588844, 1.3555969088060926], [7.49611729210503, 6.092427787598055, 1.394866816975965], [7.496117292106964, 6.092427787608937, 1.3555969088060926], [7.496117292108993, 6.0924277876182185, 1.394866816975965], [7.496117292110816, 6.092427787628475, 1.3555969088060926], [7.496117292112743, 6.0924277876372885, 1.394866816975965], [7.496117292114182, 6.092427787645385, 1.3555969088060926], [7.496117292115068, 6.09242778764944, 1.394866816975965]]. 
+    
+    The changes in the CBF constraint values over the past 50 state updates are as follows: the obstacle constraint values are [[np.float64(61.15809773001947), np.float64(-0.24942800208885138), np.float64(63.831619807013695), np.float64(47.248053015191424), np.float64(87.12058455350132), np.float64(198.27208449850724)], [np.float64(60.991391764369595), np.float64(-0.2485721395024437), np.float64(63.6142595734441), np.float64(47.29843218982199), np.float64(87.33569432869403), np.float64(197.8868039657793)], [np.float64(61.158097731573505), np.float64(-0.24942800208860216), np.float64(63.83161980752028), np.float64(47.24805301724799), np.float64(87.12058455196093), np.float64(198.27208449925)], [np.float64(60.9913917656895), np.float64(-0.24857213950191775), np.float64(63.614259573879785), np.float64(47.29843219155972), np.float64(87.33569432738226), np.float64(197.8868039664203)], [np.float64(61.15809773257248), np.float64(-0.24942800208844168), np.float64(63.83161980784405), np.float64(47.24805301857313), np.float64(87.12058455097132), np.float64(198.27208449972392)], [np.float64(60.99139176634108), np.float64(-0.24857213950165966), np.float64(63.61425957409835), np.float64(47.29843219241177), np.float64(87.33569432673353), np.float64(197.8868039667432)], [np.float64(61.158097732841426), np.float64(-0.2494280020883981), np.float64(63.83161980792917), np.float64(47.2480530189333), np.float64(87.1205845507056), np.float64(198.27208449984767)], [np.float64(60.99139176627197), np.float64(-0.2485721395016897), np.float64(63.614259574081075), np.float64(47.298432192311566), np.float64(87.33569432680035), np.float64(197.88680396672012)], [np.float64(61.158097732437874), np.float64(-0.24942800208846236), np.float64(63.83161980779529), np.float64(47.24805301840311), np.float64(87.12058455110636), np.float64(198.27208449965042)], [np.float64(60.99139176561042), np.float64(-0.248572139501956), np.float64(63.61425957386905), np.float64(47.29843219143006), np.float64(87.3356943274557), np.float64(197.88680396641067)], [np.float64(61.15809773153584), np.float64(-0.24942800208860672), np.float64(63.83161980749939), np.float64(47.24805301721245), np.float64(87.12058455200112), np.float64(198.27208449921588)], [np.float64(60.99139176454261), np.float64(-0.2485721395023843), np.float64(63.614259573522936), np.float64(47.298432190013635), np.float64(87.33569432851483), np.float64(197.88680396590408)], [np.float64(61.158097730341346), np.float64(-0.249428002088798), np.float64(63.83161980710912), np.float64(47.24805301563318), np.float64(87.12058455318541), np.float64(198.27208449864327)], [np.float64(60.991391763324835), np.float64(-0.24857213950287158), np.float64(63.61425957312562), np.float64(47.29843218840262), np.float64(87.33569432972357), np.float64(197.8868039653214)], [np.float64(61.15809772916233), np.float64(-0.2494280020889872), np.float64(63.8316198067253), np.float64(47.248053014072), np.float64(87.12058455435394), np.float64(198.27208449808074)], [np.float64(60.99139176222644), np.float64(-0.24857213950331064), np.float64(63.61425957276624), np.float64(47.29843218695126), np.float64(87.33569433081414), np.float64(197.88680396479393)], [np.float64(61.158097728167576), np.float64(-0.24942800208914684), np.float64(63.83161980640205), np.float64(47.24805301275389), np.float64(87.1205845553396), np.float64(198.2720844976072)], [np.float64(60.99139176133443), np.float64(-0.24857213950366705), np.float64(63.61425957247409), np.float64(47.29843218577306), np.float64(87.33569433169987), np.float64(197.8868039643651)], [np.float64(61.15809772738979), np.float64(-0.2494280020892718), np.float64(63.83161980614975), np.float64(47.248053011722526), np.float64(87.12058455611016), np.float64(198.27208449723787)], [np.float64(60.991391760665536), np.float64(-0.24857213950393425), np.float64(63.614259572254774), np.float64(47.298432184889975), np.float64(87.33569433236417), np.float64(197.88680396404303)], [np.float64(61.158097726839046), np.float64(-0.2494280020893604), np.float64(63.831619805971634), np.float64(47.248053010991335), np.float64(87.1205845566556), np.float64(198.2720844969773)], [np.float64(60.99139176021084), np.float64(-0.2485721395041159), np.float64(63.61425957210574), np.float64(47.29843218428961), np.float64(87.33569433281569), np.float64(197.88680396382412)], [np.float64(61.15809772648007), np.float64(-0.24942800208941818), np.float64(63.83161980585598), np.float64(47.248053010514), np.float64(87.12058455701099), np.float64(198.27208449680828)], [np.float64(60.99139175992295), np.float64(-0.24857213950423102), np.float64(63.614259572011605), np.float64(47.298432183909064), np.float64(87.3356943331015), np.float64(197.88680396368605)], [np.float64(61.15809772626021), np.float64(-0.24942800208945365), np.float64(63.83161980578559), np.float64(47.248053010220936), np.float64(87.1205845572285), np.float64(198.27208449670556)], [np.float64(60.99139175976875), np.float64(-0.24857213950429255), np.float64(63.6142595719611), np.float64(47.298432183705415), np.float64(87.33569433325462), np.float64(197.8868039636119)], [np.float64(61.158097726205675), np.float64(-0.24942800208946272), np.float64(63.83161980576982), np.float64(47.2480530101454), np.float64(87.12058455728187), np.float64(198.27208449668328)], [np.float64(60.991391759785046), np.float64(-0.24857213950428628), np.float64(63.61425957196678), np.float64(47.298432183726355), np.float64(87.33569433323835), np.float64(197.88680396362042)], [np.float64(61.1580977262878), np.float64(-0.24942800208944996), np.float64(63.83161980579846), np.float64(47.24805301025098), np.float64(87.12058455719985), np.float64(198.27208449672608)], [np.float64(60.99139175989848), np.float64(-0.24857213950424134), np.float64(63.61425957200492), np.float64(47.29843218387455), np.float64(87.33569433312537), np.float64(197.8868039636767)], [np.float64(61.15809772642128), np.float64(-0.24942800208942878), np.float64(63.83161980584359), np.float64(47.24805301042495), np.float64(87.12058455706702), np.float64(198.27208449679287)], [np.float64(60.991391760031014), np.float64(-0.2485721395041889), np.float64(63.61425957204973), np.float64(47.29843218404724), np.float64(87.3356943329933), np.float64(197.88680396374312)], [np.float64(61.158097726543446), np.float64(-0.24942800208940943), np.float64(63.831619805884806), np.float64(47.2480530105843), np.float64(87.12058455694546), np.float64(198.27208449685384)], [np.float64(60.99139176013508), np.float64(-0.24857213950414825), np.float64(63.61425957208547), np.float64(47.298432184181955), np.float64(87.3356943328894), np.float64(197.88680396379627)], [np.float64(61.15809772662246), np.float64(-0.249428002089397), np.float64(63.8316198059118), np.float64(47.248053010686824), np.float64(87.1205845568667), np.float64(198.2720844968939)], [np.float64(60.99139176018982), np.float64(-0.24857213950412713), np.float64(63.61425957210511), np.float64(47.29843218425141), np.float64(87.33569433283449), np.float64(197.8868039638258)], [np.float64(61.158097726646595), np.float64(-0.2494280020893934), np.float64(63.83161980592077), np.float64(47.24805301071691), np.float64(87.12058455684245), np.float64(198.27208449690755)], [np.float64(60.99139176018801), np.float64(-0.24857213950412854), np.float64(63.61425957210623), np.float64(47.298432184246174), np.float64(87.3356943328357), np.float64(197.88680396382819)], [np.float64(61.158097726610386), np.float64(-0.24942800208939922), np.float64(63.831619805909895), np.float64(47.24805301066745), np.float64(87.12058455687801), np.float64(198.27208449689203)], [np.float64(60.99139176012323), np.float64(-0.2485721395041551), np.float64(63.614259572086695), np.float64(47.29843218415779), np.float64(87.3356943328995), np.float64(197.88680396380013)], [np.float64(61.158097726503776), np.float64(-0.2494280020894165), np.float64(63.83161980587579), np.float64(47.2480530105253), np.float64(87.12058455698349), np.float64(198.27208449684218)], [np.float64(60.991391759980765), np.float64(-0.2485721395042128), np.float64(63.61425957204173), np.float64(47.29843218396683), np.float64(87.33569433304035), np.float64(197.88680396373482)], [np.float64(61.15809772630459), np.float64(-0.2494280020894485), np.float64(63.83161980581104), np.float64(47.248053010261415), np.float64(87.12058455718086), np.float64(198.27208449674737)], [np.float64(60.99139175973741), np.float64(-0.24857213950431073), np.float64(63.61425957196361), np.float64(47.29843218364278), np.float64(87.33569433328148), np.float64(197.8868039636208)], [np.float64(61.158097726020664), np.float64(-0.249428002089494), np.float64(63.83161980571875), np.float64(47.24805300988522), np.float64(87.1205845574622), np.float64(198.2720844966122)], [np.float64(60.991391759446756), np.float64(-0.24857213950442728), np.float64(63.61425957186927), np.float64(47.298432183257425), np.float64(87.33569433356979), np.float64(197.88680396348263)], [np.float64(61.15809772572897), np.float64(-0.2494280020895409), np.float64(63.83161980562407), np.float64(47.24805300949851), np.float64(87.12058455775122), np.float64(198.27208449647355)], [np.float64(60.991391759163875), np.float64(-0.24857213950454046), np.float64(63.61425957177727), np.float64(47.29843218288273), np.float64(87.3356943338505), np.float64(197.88680396334777)], [np.float64(61.15809772545306), np.float64(-0.2494280020895852), np.float64(63.831619805534494), np.float64(47.24805300913278), np.float64(87.12058455802459), np.float64(198.27208449634233)], [np.float64(60.991391758918425), np.float64(-0.2485721395046387), np.float64(63.61425957169693), np.float64(47.29843218255848), np.float64(87.33569433409423), np.float64(197.88680396322988)]], representing the values of $\dot{h}_{obs1} + 2h_{obs1} , \dot{h}_{obs2} +2h_{obs2} \dots$. 
+    
+    Please analyze the changes in the agent's states to identify potential issues it may encounter under the current controller. Make necessary improvements to enhance the controller's performance, enabling more **flexible** adjustments to the agent's orientation and speed when navigating around obstacles and other agents.
+    
+    If necessary, prioritizing obstacle avoidance and then moving toward the target point after reaching a safe area may be a viable solution. For example, when the distance from the current position to an obstacle is detected to be less than a safe threshold, calculate a safe direction away from the obstacle and adjust the target linear and angular velocities accordingly:
+```
+if distance_to_obstacle < safety_margin:
+    # Calculate a safe direction away from the obstacle
+    safe_direction = np.array([x - closest_point[0], y - closest_point[1]])
+    safe_direction /= np.linalg.norm(safe_direction)
+    v_target = 0.5 * v_max  # Reduce target velocity
+    omega_target = np.arctan2(safe_direction[1], safe_direction[0]) - theta
+    omega_target = (omega_target + np.pi) % (2 * np.pi) - np.pi
+    v = v_target
+    omega = omega_target
+```
+    **Be sure not to change the function name.**
+    
+
+Assistant:
+The data indicates that the agent is oscillating between certain states and not progressing towards its target. One potential improvement is to integrate the control barrier function (CBF) directly into the control calculation to ensure the agent maintains a safe distance from obstacles and adjusts its trajectories more flexibly.
+
+For this improvement:
+1. **Calculate Desired Velocity**: Compute the desired direction towards the target from the agent's current position and compute the linear velocity towards the target.
+2. **Obstacle Avoidance and Control Barrier Functions (CBF)**: Evaluate the CBF constraints for each obstacle and other agents, adjusting control inputs to ensure safety and flexibility.
+3. **Combine Forces**: Adjust the velocities \(v\) and \(\omega\) based on the closest objects using CBFs, ensuring the agent stays within safe regions while moving towards the target.
+
+Here's the updated implementation:
+
+```python
+import numpy as np
+
+def get_control(index, all_state, all_ctrl, target_pos, obs_pos, agent_R, state_info):
+    def wrap_angle(angle):
+        while angle > np.pi:
+            angle -= 2 * np.pi
+        while angle < -np.pi:
+            angle += 2 * np.pi
+        return angle
+    
+    # Extract current state of the agent
+    state = all_state[index]
+    target = target_pos
+    px, py, theta = state
+    v_max = 1.0  # Max linear velocity
+    
+    # Attractive force towards the target
+    target_vec = np.array([target[0] - px, target[1] - py])
+    distance_to_target = np.linalg.norm(target_vec)
+    angle_to_target = np.arctan2(target_vec[1], target_vec[0])
+    desired_theta = wrap_angle(angle_to_target)
+    
+    # Proportional gain for control
+    Kp_v = 1.0 
+    Kp_omega = 2.0 
+    
+    v = Kp_v * distance_to_target
+    omega = Kp_omega * wrap_angle(desired_theta - theta)
+    
+    safety_margin = 1.5 * agent_R
+    
+    def point_to_line_distance(point, line_start, line_end):
+        line_vec = np.array(line_end) - np.array(line_start)
+        point_vec = np.array(point) - np.array(line_start)
+        line_len = np.linalg.norm(line_vec)
+        line_unitvec = line_vec / line_len
+        point_vec_scaled = point_vec / line_len
+        t = np.dot(line_unitvec, point_vec_scaled)
+        t = np.clip(t, 0.0, 1.0)
+        nearest = np.array(line_start) + t * line_vec
+        dist = np.linalg.norm(np.array(point) - nearest)
+        return dist, nearest
+    
+    # Helper function to adjust control according to CBF constraints
+    def apply_cbf_constraints(px, py, theta, v, omega, ox, oy, R, is_obstacle=True):
+        h = (px - ox)**2 + (py - oy)**2 - R**2
+        phi = 2 * ((px - ox) * v * np.cos(theta) + (py - oy) * v * np.sin(theta)) + 2 * h
+        if phi < 0:
+            # Calculate a safe direction away from the obstacle or other agent
+            safe_direction = np.array([px - ox, py - oy])
+            safe_direction /= np.linalg.norm(safe_direction)
+            v_target = 0.5 * v_max  # Reduce target velocity
+            omega_target = np.arctan2(safe_direction[1], safe_direction[0]) - theta
+            omega_target = wrap_angle(omega_target)
+            return v_target, omega_target
+        else:
+            return v, omega
+
+    # Obstacle avoidance and CBF application
+    for obs in obs_pos:
+        for i in range(len(obs) - 1):
+            dist_to_obs, closest_point = point_to_line_distance((px, py), obs[i], obs[i+1])
+            if dist_to_obs < safety_margin:
+                v, omega = apply_cbf_constraints(px, py, theta, v, omega, closest_point[0], closest_point[1], agent_R, is_obstacle=True)
+    
+    # Avoid other agents
+    for i, other_state in enumerate(all_state):
+        if i != index:
+            dist_to_agent = np.linalg.norm(np.array([px - other_state[0], py - other_state[1]]))
+            if dist_to_agent < 2 * agent_R:
+                v, omega = apply_cbf_constraints(px, py, theta, v, omega, other_state[0], other_state[1], 2 * agent_R, is_obstacle=False)
+    
+    # Ensure the control inputs are within reasonable limits
+    v = np.clip(v, -v_max, v_max)
+    omega = np.clip(omega, -np.pi/4, np.pi/4)
+
+    control_input = [v, omega]
+    return control_input
+```
+
+In this code, we have added a helper function `apply_cbf_constraints` to enforce the CBF constraints dynamically when adjusting the agent's control signals. This ensures the agent remains in a safe region while avoiding obstacles by adjusting its velocities based on the constraints.
+
+The main improvements include:
+- **Use of CBF to dynamically adjust control inputs**: Whenever the agent approaches the safety margins defined by CBF constraints, the control inputs are adjusted to maintain safety.
+- **Flexible adjustment of velocities**: When the agent is too close to an obstacle or another agent, the controller reduces the velocity and modifies the direction to safely deviate from the obstacle/agent.
+- **Prioritization of safety**: Safe movement is prioritized by ensuring compliance with CBF constraints before moving towards the target.
+
+By integrating CBF constraints and dynamically adjusting control signals, the agent can avoid getting stuck or entering cyclic motions, ensuring a more robust and safe navigation strategy.
+
